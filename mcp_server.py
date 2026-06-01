@@ -3,7 +3,7 @@ import json
 import logging
 import mcp.server.stdio
 from mcp.server import Server
-from mcp.types import Tool, TextContent
+from mcp.types import Tool, TextContent  
 
 from mcp_tools import (
     train_automl_models,
