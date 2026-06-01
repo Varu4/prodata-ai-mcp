@@ -24,7 +24,7 @@ pip install -r mcp_requirements.txt
 python mcp_server.py
 ```
 
-Server will be ready at `http://localhost:8000`
+Server will be ready at `http://localhost:8080
 
 ## Available Tools
 
