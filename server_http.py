@@ -1,4 +1,9 @@
+from starlette.applications import Starlette
+from starlette.responses import JSONResponse
+from starlette.routing import Route, Mount
+
 from mcp.server.fastmcp import FastMCP
+
 from mcp_tools import (
     train_automl_models,
     forecast_timeseries,
@@ -6,11 +11,15 @@ from mcp_tools import (
     get_feature_importance,
     generate_report
 )
-from fastapi import FastAPI
 
+# Create MCP server
 mcp = FastMCP("ProData AI")
 
-# Tool 1
+
+# =========================
+# MCP TOOLS
+# =========================
+
 @mcp.tool()
 async def analyze_dataset_tool(
     csv_data: str,
@@ -18,7 +27,7 @@ async def analyze_dataset_tool(
 ):
     return await analyze_dataset(csv_data, analysis_type)
 
-# Tool 2
+
 @mcp.tool()
 async def train_automl_models_tool(
     csv_data: str,
@@ -33,39 +42,35 @@ async def train_automl_models_tool(
         test_size
     )
 
-# Tool 3
+
 @mcp.tool()
 async def forecast_timeseries_tool(
     csv_data: str,
     date_column: str,
     value_column: str,
-    periods: int = 30,
-    interval_width: float = 0.95
+    periods: int = 30
 ):
     return await forecast_timeseries(
         csv_data,
         date_column,
         value_column,
-        periods,
-        interval_width
+        periods
     )
 
-# Tool 4
+
 @mcp.tool()
 async def get_feature_importance_tool(
     csv_data: str,
     target_column: str,
-    top_n: int = 10,
-    feature_columns: list[str] = None
+    top_n: int = 10
 ):
     return await get_feature_importance(
         csv_data,
         target_column,
-        top_n,
-        feature_columns
+        top_n
     )
 
-# Tool 5
+
 @mcp.tool()
 async def generate_report_tool(
     csv_data: str,
@@ -80,13 +85,25 @@ async def generate_report_tool(
         target_column
     )
 
-# Create HTTP MCP app
-app = mcp.streamable_http_app()
 
-# Health check
-@app.get("/")
-async def health():
-    return {
+# =========================
+# HEALTH CHECK
+# =========================
+
+async def health(request):
+    return JSONResponse({
         "status": "ok",
         "service": "ProData AI MCP"
-    }
+    })
+
+
+# MCP HTTP APP
+mcp_app = mcp.streamable_http_app()
+
+# Main Railway App
+app = Starlette(
+    routes=[
+        Route("/", health),
+        Mount("/mcp", app=mcp_app)
+    ]
+)
