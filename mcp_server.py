@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
 # ════════════════════════════════════════════════════════════════════════════════
-# PRODATA AI — MCP SERVER v1.0
-# Model Context Protocol Implementation
-# Exposes ProData AI tools to Claude and other AI platforms
+# PRODATA AI — MCP SERVER v2.0 (HTTP-Compatible for Railway)
+# Model Context Protocol Implementation with HTTP support
 # ════════════════════════════════════════════════════════════════════════════════
 
 import json
 import logging
+import os
 from typing import Any
+import asyncio
+from contextlib import asynccontextmanager
+
+# For stdio MCP
 import mcp.server.stdio
 from mcp.server import Server
-from mcp.types import Tool, TextContent
+from mcp.types import Tool, TextContent, ToolResult
+
+# For HTTP (optional fallback)
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
 
 # Import tool implementations
 from mcp_tools import (
@@ -35,7 +43,7 @@ logger = logging.getLogger(__name__)
 server = Server("prodata-ai-mcp")
 
 # ════════════════════════════════════════════════════════════════════════════════
-# TOOL 1: TRAIN AUTOML MODELS
+# TOOL DEFINITIONS
 # ════════════════════════════════════════════════════════════════════════════════
 
 @server.list_tools()
@@ -181,12 +189,8 @@ async def handle_list_tools() -> list[Tool]:
         )
     ]
 
-# ════════════════════════════════════════════════════════════════════════════════
-# TOOL EXECUTION
-# ════════════════════════════════════════════════════════════════════════════════
-
 @server.call_tool()
-async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
+async def handle_call_tool(name: str, arguments: dict) -> list[TextContent | ToolResult]:
     """Execute ProData AI tools"""
     logger.info(f"Calling tool: {name}")
     
@@ -240,23 +244,59 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
         logger.error(error_msg)
         return [TextContent(type="text", text=json.dumps({"error": error_msg}))]
 
-# ════════════════════════════════════════════════════════════════════════════════
-# MAIN
-# ════════════════════════════════════════════════════════════════════════════════
+import mcp.server.stdio
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
 
-async def main():
-    """Start the MCP server"""
-    logger.info("Starting ProData AI MCP Server...")
-    logger.info("Available tools: train_automl_models, forecast_timeseries, analyze_dataset, get_feature_importance, generate_report")
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    """Simple HTTP handler for health checks"""
     
-    async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-        logger.info("Server is ready and listening...")
-        await server.run(
-            read_stream,
-            write_stream,
-            server.create_initialization_options()
-        )
+    def do_GET(self):
+        if self.path == '/health' or self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            response = json.dumps({"status": "ok", "service": "ProData AI MCP"})
+            self.wfile.write(response.encode())
+            logger.info("Health check passed")
+        else:
+            self.send_response(404)
+            self.end_headers()
+    
+    def log_message(self, format, *args):
+        """Suppress default logging"""
+        pass
+
+def start_health_check_server():
+    """Start a simple HTTP server for health checks"""
+    port = int(os.getenv("PORT", 8000))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    logger.info(f"Health check server listening on port {port}")
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    return server
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    # Start health check server (for Railway/HTTP monitoring)
+    try:
+        start_health_check_server()
+    except Exception as e:
+        logger.warning(f"Could not start health check server: {e}")
+    
+    # Run MCP server
+    try:
+        import asyncio
+        asyncio.run(run_mcp_server())
+    except KeyboardInterrupt:
+        logger.info("Server stopped by user")
+    except Exception as e:
+        logger.error(f"Server error: {e}")
+
+async def run_mcp_server():
+    """Start the MCP server via stdio"""
+    logger.info("Starting ProData AI MCP Server (stdio mode)...")
+    logger.info("Available tools: train_automl_models, forecast_timeseries, analyze_dataset, get_feature_importance, generate_report")
+    
+    async with mcp.server.stdio.stdio_server(server) as (read_stream, write_stream):
+        logger.info("Server is ready and listening...")
+        await server.run(read_stream, write_stream)
