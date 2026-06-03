@@ -100,10 +100,15 @@ async def health(request):
 # MCP HTTP APP
 mcp_app = mcp.streamable_http_app()
 
+# Test route
+async def mcp_test(request):
+    return JSONResponse({"mcp": "mounted"})
+
 # Main Railway App
 app = Starlette(
     routes=[
         Route("/", health),
+        Route("/mcp-test", mcp_test),
         Mount("/mcp", app=mcp_app)
     ]
 )
