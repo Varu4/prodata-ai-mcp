@@ -1,5 +1,4 @@
 import os
-import uvicorn
 from mcp.server.fastmcp import FastMCP
 from mcp_tools import (
     train_automl_models,
@@ -10,7 +9,12 @@ from mcp_tools import (
 )
 
 # Create MCP server
-mcp = FastMCP("ProData AI")
+port = int(os.environ.get("PORT", 8080))
+mcp = FastMCP(
+    "ProData AI",
+    host="0.0.0.0",
+    port=port
+)
 
 
 # =========================
@@ -89,13 +93,8 @@ async def generate_report_tool(
 
 
 # =========================
-# APP + RUN
+# RUN
 # =========================
 
-# Module-level app so both `python server_http.py`
-# and `uvicorn server_http:app` work
-app = mcp.streamable_http_app()
-
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    mcp.run(transport="streamable-http")
