@@ -1,3 +1,4 @@
+import os
 import uvicorn
 from mcp.server.fastmcp import FastMCP
 from mcp_tools import (
@@ -88,13 +89,13 @@ async def generate_report_tool(
 
 
 # =========================
-# RUN
+# APP + RUN
 # =========================
 
+# Module-level app so both `python server_http.py`
+# and `uvicorn server_http:app` work
+app = mcp.streamable_http_app()
 
 if __name__ == "__main__":
-    import os
-    import uvicorn
-    app = mcp.streamable_http_app()
     port = int(os.environ.get("PORT", 8080))
     uvicorn.run(app, host="0.0.0.0", port=port)
