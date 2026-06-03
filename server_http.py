@@ -1,9 +1,5 @@
-from starlette.applications import Starlette
-from starlette.responses import JSONResponse
-from starlette.routing import Route, Mount
-
+import uvicorn
 from mcp.server.fastmcp import FastMCP
-
 from mcp_tools import (
     train_automl_models,
     forecast_timeseries,
@@ -25,6 +21,7 @@ async def analyze_dataset_tool(
     csv_data: str,
     analysis_type: str = "full"
 ):
+    """Analyze a CSV dataset and return statistics, correlations, and insights."""
     return await analyze_dataset(csv_data, analysis_type)
 
 
@@ -35,6 +32,7 @@ async def train_automl_models_tool(
     feature_columns: list[str] = None,
     test_size: float = 0.2
 ):
+    """Train multiple ML models automatically and return the best performing one."""
     return await train_automl_models(
         csv_data,
         target_column,
@@ -50,6 +48,7 @@ async def forecast_timeseries_tool(
     value_column: str,
     periods: int = 30
 ):
+    """Forecast future values of a time series using advanced ML models."""
     return await forecast_timeseries(
         csv_data,
         date_column,
@@ -64,6 +63,7 @@ async def get_feature_importance_tool(
     target_column: str,
     top_n: int = 10
 ):
+    """Return the most important features driving a target variable."""
     return await get_feature_importance(
         csv_data,
         target_column,
@@ -78,6 +78,7 @@ async def generate_report_tool(
     include_ml: bool = True,
     target_column: str = None
 ):
+    """Generate a full analysis report including stats, ML models, and insights."""
     return await generate_report(
         csv_data,
         report_type,
@@ -87,28 +88,13 @@ async def generate_report_tool(
 
 
 # =========================
-# HEALTH CHECK
+# RUN
 # =========================
 
-async def health(request):
-    return JSONResponse({
-        "status": "ok",
-        "service": "ProData AI MCP"
-    })
 
-
-# MCP HTTP APP
-mcp_app = mcp.streamable_http_app()
-
-# Test route
-async def mcp_test(request):
-    return JSONResponse({"mcp": "mounted"})
-
-# Main Railway App
-app = Starlette(
-    routes=[
-        Route("/", health),
-        Route("/mcp-test", mcp_test),
-        Mount("/mcp", app=mcp_app)
-    ]
-)
+if __name__ == "__main__":
+    import os
+    import uvicorn
+    app = mcp.streamable_http_app()
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run(app, host="0.0.0.0", port=port)
