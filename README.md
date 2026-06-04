@@ -1,5 +1,7 @@
 # ProData AI MCP Server
 
+[![MCPize](https://mcpize.com/badge/@Varu4/prodata-ai)](https://mcpize.com/mcp/prodata-ai)
+
 Professional data analysis tool integrated with Claude's Model Context Protocol.
 
 ## Features
@@ -25,6 +27,16 @@ python mcp_server.py
 ```
 
 Server will be ready at `http://localhost:8080
+
+## Connect via MCPize
+
+Use this MCP server instantly with no local installation:
+
+```bash
+npx -y mcpize connect @Varu4/prodata-ai --client claude
+```
+
+Or connect at: **https://mcpize.com/mcp/prodata-ai**
 
 ## Available Tools
 
