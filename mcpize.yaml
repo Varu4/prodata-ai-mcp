@@ -1,0 +1,22 @@
+# MCPize Configuration
+# Docs: https://mcpize.com/docs/mcpize-yaml
+
+version: 1
+
+name: "ProData AI"
+slug: "prodata-ai"
+
+runtime: python
+entry: "mcp_server.py"
+
+build:
+  install: "pip install -r requirements.txt"
+
+start:
+  type: http
+  command: "python"
+  args:
+    - "mcp_server.py"
+
+bridge:
+  mode: http
