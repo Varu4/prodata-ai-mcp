@@ -21,7 +21,7 @@ pip install -r mcp_requirements.txt
 ### Run Server
 
 ```bash
-python mcp_server.py
+python server_http.py
 ```
 
 Server will be ready at `http://localhost:8080
