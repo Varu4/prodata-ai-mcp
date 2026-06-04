@@ -14,8 +14,6 @@ mcp = FastMCP(
     "ProData AI",
     host="0.0.0.0",
     port=port,
-    cors_origins=["*"],
-    allowed_hosts=["*"],
 )
 
 
