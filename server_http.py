@@ -106,4 +106,7 @@ async def generate_report_tool(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(mcp.streamable_http_app(), host="0.0.0.0", port=port)
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
+    app = mcp.streamable_http_app()
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
+    uvicorn.run(app, host="0.0.0.0", port=port)
