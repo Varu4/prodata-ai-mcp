@@ -13,7 +13,7 @@ port = int(os.environ.get("PORT", 8080))
 mcp = FastMCP(
     "ProData AI",
     host="0.0.0.0",
-    port=port
+    port=port,
     cors_origins=["*"],
     allowed_hosts=["*"],
 )
