@@ -9,12 +9,20 @@ from mcp_tools import (
 )
 
 # Create MCP server
+import os
+
 port = int(os.environ.get("PORT", 8080))
-mcp = FastMCP(
-    "ProData AI",
-    host="0.0.0.0",
-    port=port,
-)
+is_railway = os.environ.get("RAILWAY_ENVIRONMENT") is not None
+
+if is_railway:
+    mcp = FastMCP(
+        "ProData AI",
+        host="0.0.0.0",
+        port=port,
+    )
+else:
+    # MCPize manages host/port itself
+    mcp = FastMCP("ProData AI")
 
 
 # =========================
