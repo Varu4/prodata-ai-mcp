@@ -6,6 +6,9 @@ from mcp_tools import (
     analyze_dataset,
     get_feature_importance,
     generate_report
+    clean_dataset,        
+    detect_anomalies,     
+    compare_datasets, 
 )
 
 # Create MCP server
@@ -99,6 +102,51 @@ async def generate_report_tool(
         target_column
     )
 
+
+@mcp.tool()
+async def clean_dataset_tool(
+    csv_data: str,
+    drop_duplicates: bool = True,
+    fill_numeric: str = "median",
+    fill_categorical: str = "mode",
+    remove_outliers: bool = False,
+    outlier_threshold: float = 3.0,
+    strip_whitespace: bool = True,
+):
+    """Clean a CSV dataset — handles missing values, duplicates, whitespace, and outliers."""
+    return await clean_dataset(
+        csv_data, drop_duplicates, fill_numeric,
+        fill_categorical, remove_outliers,
+        outlier_threshold, strip_whitespace
+    )
+
+@mcp.tool()
+async def detect_anomalies_tool(
+    csv_data: str,
+    method: str = "isolation_forest",
+    contamination: float = 0.05,
+    zscore_threshold: float = 3.0,
+    columns: str = "",
+):
+    """Detect anomalies and outliers in a CSV dataset using Isolation Forest, Z-score, or IQR."""
+    return await detect_anomalies(
+        csv_data, method, contamination,
+        zscore_threshold, columns
+    )
+
+@mcp.tool()
+async def compare_datasets_tool(
+    csv_data_1: str,
+    csv_data_2: str,
+    label_1: str = "Dataset A",
+    label_2: str = "Dataset B",
+    match_column: str = "",
+):
+    """Compare two CSV datasets — schema diff, statistical shifts, distribution changes."""
+    return await compare_datasets(
+        csv_data_1, csv_data_2,
+        label_1, label_2, match_column
+    )
 
 # =========================
 # RUN
