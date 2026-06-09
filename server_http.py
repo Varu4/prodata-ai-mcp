@@ -7,7 +7,7 @@ from mcp_tools import (
     get_feature_importance,
     generate_report,
     clean_dataset,        
-    detect_anomalies,     
+    detect_anomalies,      
     compare_datasets, 
 )
 
