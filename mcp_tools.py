@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+urn {"#!/usr/bin/env python3
 # ════════════════════════════════════════════════════════════════════════════════
 # PRODATA AI — MCP TOOLS IMPLEMENTATION
 # Core functions exposed through MCP
@@ -10,6 +10,7 @@ import logging
 from typing import Optional, List, Dict, Any
 import pandas as pd
 import numpy as np
+from io import StringIO
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier, GradientBoostingRegressor, GradientBoostingClassifier
 from sklearn.linear_model import LinearRegression, Ridge, Lasso, LogisticRegression
@@ -489,3 +490,348 @@ async def generate_report(
     except Exception as e:
         logger.error(f"Error in generate_report: {str(e)}")
         return {"error": f"Report generation failed: {str(e)}"}
+
+
+from sklearn.ensemble import IsolationForest
+ 
+ 
+def _parse_csv(csv_data: str) -> pd.DataFrame:
+    return pd.read_csv(StringIO(csv_data.strip()))
+ 
+ 
+# ══════════════════════════════════════════════════════════════
+# clean_dataset
+# ══════════════════════════════════════════════════════════════
+async def clean_dataset(
+    csv_data: str,
+    drop_duplicates: bool = True,
+    fill_numeric: str = "median",
+    fill_categorical: str = "mode",
+    remove_outliers: bool = False,
+    outlier_threshold: float = 3.0,
+    strip_whitespace: bool = True,
+) -> dict:
+    try:
+        df = _parse_csv(csv_data)
+        original_shape = df.shape
+        report = []
+ 
+        # 1. Strip whitespace
+        if strip_whitespace:
+            str_cols = df.select_dtypes(include="object").columns
+            for col in str_cols:
+                df[col] = df[col].str.strip()
+            if len(str_cols):
+                report.append(f"Stripped whitespace from {len(str_cols)} text columns: {list(str_cols)}")
+ 
+        # 2. Drop duplicates
+        if drop_duplicates:
+            before = len(df)
+            df = df.drop_duplicates()
+            removed = before - len(df)
+            report.append(f"Removed {removed} duplicate rows" if removed else "No duplicate rows found")
+ 
+        # 3. Handle missing values
+        missing_before = df.isnull().sum()
+        total_missing = missing_before.sum()
+ 
+        if total_missing > 0:
+            numeric_cols = df.select_dtypes(include=[np.number]).columns
+            cat_cols = df.select_dtypes(include="object").columns
+ 
+            for col in numeric_cols:
+                if df[col].isnull().sum() > 0:
+                    if fill_numeric == "median":
+                        df[col].fillna(df[col].median(), inplace=True)
+                    elif fill_numeric == "mean":
+                        df[col].fillna(df[col].mean(), inplace=True)
+                    elif fill_numeric == "zero":
+                        df[col].fillna(0, inplace=True)
+                    elif fill_numeric == "drop":
+                        df = df.dropna(subset=[col])
+ 
+            for col in cat_cols:
+                if df[col].isnull().sum() > 0:
+                    if fill_categorical == "mode":
+                        mode_val = df[col].mode()
+                        df[col].fillna(mode_val[0] if len(mode_val) else "Unknown", inplace=True)
+                    elif fill_categorical == "unknown":
+                        df[col].fillna("Unknown", inplace=True)
+                    elif fill_categorical == "drop":
+                        df = df.dropna(subset=[col])
+ 
+            filled_cols = missing_before[missing_before > 0].to_dict()
+            report.append(f"Filled {total_missing} missing values: {filled_cols}")
+        else:
+            report.append("No missing values found")
+ 
+        # 4. Remove outliers
+        if remove_outliers:
+            numeric_cols = df.select_dtypes(include=[np.number]).columns
+            before = len(df)
+            for col in numeric_cols:
+                mean = df[col].mean()
+                std = df[col].std()
+                if std > 0:
+                    df = df[np.abs((df[col] - mean) / std) <= outlier_threshold]
+            removed_outliers = before - len(df)
+            report.append(
+                f"Removed {removed_outliers} outlier rows (Z-score > {outlier_threshold})"
+                if removed_outliers else "No outliers removed"
+            )
+ 
+        final_shape = df.shape
+        missing_after = df.isnull().sum().sum()
+        completeness = round((1 - missing_after / (df.shape[0] * df.shape[1])) * 100, 2) if df.size > 0 else 100.0
+ 
+        return {
+            "success": True,
+            "task": "clean_dataset",
+            "original_shape": {"rows": original_shape[0], "columns": original_shape[1]},
+            "cleaned_shape": {"rows": final_shape[0], "columns": final_shape[1]},
+            "rows_removed": original_shape[0] - final_shape[0],
+            "completeness_after_cleaning": f"{completeness}%",
+            "changes_made": report,
+            "cleaned_csv": df.to_csv(index=False),
+            "column_dtypes": df.dtypes.astype(str).to_dict(),
+        }
+ 
+    except Exception as e:
+        return {"success": False, "task": "clean_dataset", "error": str(e)}
+ 
+ 
+# ══════════════════════════════════════════════════════════════
+# detect_anomalies
+# ══════════════════════════════════════════════════════════════
+async def detect_anomalies(
+    csv_data: str,
+    method: str = "isolation_forest",
+    contamination: float = 0.05,
+    zscore_threshold: float = 3.0,
+    columns: str = "",
+) -> dict:
+    try:
+        df = _parse_csv(csv_data)
+ 
+        # Select columns
+        if columns.strip():
+            target_cols = [c.strip() for c in columns.split(",") if c.strip() in df.columns]
+        else:
+            target_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+ 
+        if not target_cols:
+            return {
+                "success": False,
+                "task": "detect_anomalies",
+                "error": "No numeric columns found or specified.",
+            }
+ 
+        numeric_df = df[target_cols].copy()
+        anomaly_mask = pd.Series([False] * len(df), index=df.index)
+ 
+        if method == "isolation_forest":
+            clf = IsolationForest(
+                contamination=max(0.01, min(0.5, contamination)),
+                random_state=42,
+                n_estimators=100,
+            )
+            preds = clf.fit_predict(numeric_df.fillna(numeric_df.median()))
+            anomaly_mask = pd.Series(preds == -1, index=df.index)
+            scores = clf.decision_function(numeric_df.fillna(numeric_df.median()))
+            anomaly_scores = pd.Series(np.round(scores, 4), index=df.index)
+ 
+        elif method == "zscore":
+            z_scores = np.abs((numeric_df - numeric_df.mean()) / numeric_df.std())
+            anomaly_mask = (z_scores > zscore_threshold).any(axis=1)
+            anomaly_scores = z_scores.max(axis=1).round(4)
+ 
+        elif method == "iqr":
+            Q1 = numeric_df.quantile(0.25)
+            Q3 = numeric_df.quantile(0.75)
+            IQR = Q3 - Q1
+            lower = Q1 - 1.5 * IQR
+            upper = Q3 + 1.5 * IQR
+            anomaly_mask = ((numeric_df < lower) | (numeric_df > upper)).any(axis=1)
+            deviation = ((numeric_df - numeric_df.median()).abs() / (IQR + 1e-9))
+            anomaly_scores = deviation.max(axis=1).round(4)
+ 
+        else:
+            return {"success": False, "task": "detect_anomalies", "error": f"Unknown method: {method}"}
+ 
+        anomalous_df = df[anomaly_mask].copy()
+        anomalous_df["__anomaly_score__"] = anomaly_scores[anomaly_mask].values
+ 
+        col_stats = {}
+        for col in target_cols:
+            q1 = df[col].quantile(0.25)
+            q3 = df[col].quantile(0.75)
+            iqr = q3 - q1
+            col_stats[col] = {
+                "mean": round(df[col].mean(), 4),
+                "std": round(df[col].std(), 4),
+                "min": round(df[col].min(), 4),
+                "max": round(df[col].max(), 4),
+                "outliers_iqr": int(((df[col] < q1 - 1.5 * iqr) | (df[col] > q3 + 1.5 * iqr)).sum()),
+            }
+ 
+        return {
+            "success": True,
+            "task": "detect_anomalies",
+            "method": method,
+            "total_rows": len(df),
+            "anomalies_found": int(anomaly_mask.sum()),
+            "anomaly_percent": round(anomaly_mask.sum() / len(df) * 100, 2),
+            "columns_analyzed": target_cols,
+            "anomalous_rows": anomalous_df.head(50).to_dict(orient="records"),
+            "anomalous_indices": anomaly_mask[anomaly_mask].index.tolist()[:50],
+            "column_stats": col_stats,
+            "clean_csv": df[~anomaly_mask].to_csv(index=False),
+        }
+ 
+    except Exception as e:
+        return {"success": False, "task": "detect_anomalies", "error": str(e)}
+ 
+ 
+# ══════════════════════════════════════════════════════════════
+# compare_datasets
+# ══════════════════════════════════════════════════════════════
+async def compare_datasets(
+    csv_data_1: str,
+    csv_data_2: str,
+    label_1: str = "Dataset A",
+    label_2: str = "Dataset B",
+    match_column: str = "",
+) -> dict:
+    try:
+        df1 = _parse_csv(csv_data_1)
+        df2 = _parse_csv(csv_data_2)
+ 
+        result = {
+            "success": True,
+            "task": "compare_datasets",
+            "labels": [label_1, label_2],
+        }
+ 
+        # 1. Shape
+        result["shape"] = {
+            label_1: {"rows": df1.shape[0], "columns": df1.shape[1]},
+            label_2: {"rows": df2.shape[0], "columns": df2.shape[1]},
+            "row_diff": df2.shape[0] - df1.shape[0],
+            "col_diff": df2.shape[1] - df1.shape[1],
+        }
+ 
+        # 2. Schema diff
+        cols1 = set(df1.columns)
+        cols2 = set(df2.columns)
+        common_cols = cols1 & cols2
+        result["schema"] = {
+            "columns_only_in_1": sorted(list(cols1 - cols2)),
+            "columns_only_in_2": sorted(list(cols2 - cols1)),
+            "common_columns": sorted(list(common_cols)),
+            "dtype_changes": {},
+        }
+        for col in common_cols:
+            t1 = str(df1[col].dtype)
+            t2 = str(df2[col].dtype)
+            if t1 != t2:
+                result["schema"]["dtype_changes"][col] = {label_1: t1, label_2: t2}
+ 
+        # 3. Statistical comparison
+        numeric_common = [
+            c for c in common_cols
+            if pd.api.types.is_numeric_dtype(df1[c]) and pd.api.types.is_numeric_dtype(df2[c])
+        ]
+        stats_comparison = {}
+        for col in numeric_common:
+            s1 = df1[col].dropna()
+            s2 = df2[col].dropna()
+            mean_change = round(s2.mean() - s1.mean(), 4)
+            mean_change_pct = round((mean_change / s1.mean() * 100), 2) if s1.mean() != 0 else None
+            stats_comparison[col] = {
+                label_1: {
+                    "mean": round(s1.mean(), 4),
+                    "median": round(s1.median(), 4),
+                    "std": round(s1.std(), 4),
+                    "min": round(s1.min(), 4),
+                    "max": round(s1.max(), 4),
+                    "missing": int(df1[col].isnull().sum()),
+                },
+                label_2: {
+                    "mean": round(s2.mean(), 4),
+                    "median": round(s2.median(), 4),
+                    "std": round(s2.std(), 4),
+                    "min": round(s2.min(), 4),
+                    "max": round(s2.max(), 4),
+                    "missing": int(df2[col].isnull().sum()),
+                },
+                "mean_change": mean_change,
+                "mean_change_pct": f"{mean_change_pct}%" if mean_change_pct is not None else "N/A",
+                "distribution_shift": "significant" if abs(mean_change_pct or 0) > 10 else "minor",
+            }
+        result["statistics"] = stats_comparison
+ 
+        # 4. Categorical comparison
+        cat_common = [c for c in common_cols if df1[c].dtype == "object" and df2[c].dtype == "object"]
+        cat_comparison = {}
+        for col in cat_common:
+            vals1 = set(df1[col].dropna().unique())
+            vals2 = set(df2[col].dropna().unique())
+            cat_comparison[col] = {
+                "unique_values_in_1": len(vals1),
+                "unique_values_in_2": len(vals2),
+                "new_values_in_2": sorted(list(vals2 - vals1))[:20],
+                "removed_values_from_1": sorted(list(vals1 - vals2))[:20],
+                "top_value_1": str(df1[col].value_counts().index[0]) if len(df1[col].dropna()) else None,
+                "top_value_2": str(df2[col].value_counts().index[0]) if len(df2[col].dropna()) else None,
+            }
+        result["categorical"] = cat_comparison
+ 
+        # 5. Missing value changes
+        missing_comparison = {}
+        for col in common_cols:
+            m1 = int(df1[col].isnull().sum())
+            m2 = int(df2[col].isnull().sum())
+            if m1 != m2:
+                missing_comparison[col] = {label_1: m1, label_2: m2, "change": m2 - m1}
+        result["missing_value_changes"] = missing_comparison
+ 
+        # 6. Row-level diff
+        if match_column and match_column in common_cols:
+            keys1 = set(df1[match_column].astype(str))
+            keys2 = set(df2[match_column].astype(str))
+            result["row_diff"] = {
+                "match_column": match_column,
+                "rows_only_in_1": sorted(list(keys1 - keys2))[:30],
+                "rows_only_in_2": sorted(list(keys2 - keys1))[:30],
+                "common_rows": len(keys1 & keys2),
+            }
+ 
+        # 7. Summary
+        significant_shifts = [
+            col for col, v in stats_comparison.items()
+            if v.get("distribution_shift") == "significant"
+        ]
+        result["summary"] = {
+            "overall_similarity": (
+                "high" if len(significant_shifts) == 0
+                and not result["schema"]["columns_only_in_1"]
+                and not result["schema"]["columns_only_in_2"]
+                else "moderate" if len(significant_shifts) <= 2 else "low"
+            ),
+            "significant_shifts_in": significant_shifts,
+            "schema_changed": bool(
+                result["schema"]["columns_only_in_1"]
+                or result["schema"]["columns_only_in_2"]
+                or result["schema"]["dtype_changes"]
+            ),
+            "recommendation": (
+                "Datasets look very similar — minor differences only."
+                if not significant_shifts
+                else f"Notable distribution shifts in: {', '.join(significant_shifts)}. Investigate before merging."
+            ),
+        }
+ 
+        return result
+ 
+    except Exception as e:
+        return {"success": False, "task": "compare_datasets", "error": str(e)}
