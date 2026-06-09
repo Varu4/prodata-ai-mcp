@@ -5,7 +5,7 @@ from mcp_tools import (
     forecast_timeseries,
     analyze_dataset,
     get_feature_importance,
-    generate_report
+    generate_report,
     clean_dataset,        
     detect_anomalies,     
     compare_datasets, 
