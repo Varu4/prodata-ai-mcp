@@ -1,4 +1,4 @@
-urn {"#!/usr/bin/env python3
+#!/usr/bin/env python3
 # ════════════════════════════════════════════════════════════════════════════════
 # PRODATA AI — MCP TOOLS IMPLEMENTATION
 # Core functions exposed through MCP
