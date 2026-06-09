@@ -18,6 +18,7 @@ from sklearn.tree import DecisionTreeRegressor, DecisionTreeClassifier
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error, accuracy_score
 from prophet import Prophet
+from sklearn.ensemble import IsolationForest
 
 logger = logging.getLogger(__name__)
 
@@ -491,8 +492,6 @@ async def generate_report(
         logger.error(f"Error in generate_report: {str(e)}")
         return {"error": f"Report generation failed: {str(e)}"}
 
-
-from sklearn.ensemble import IsolationForest
  
  
 def _parse_csv(csv_data: str) -> pd.DataFrame:
