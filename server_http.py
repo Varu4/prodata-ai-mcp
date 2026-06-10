@@ -12,6 +12,9 @@ from mcp_tools import (
     cluster_data,
     correlation_analysis,
     explain_model,
+    generate_dashboard,
+    suggest_visualizations,
+    generate_sql,
 )
 
 # Create MCP server
@@ -183,7 +186,35 @@ async def explain_model_tool(
     """Claude-powered plain-English explanation of ML results with actionable recommendations."""
     return await explain_model(csv_data, target_column, audience, include_recommendations)
 
+@mcp.tool()
+async def generate_dashboard_tool(
+    csv_data: str,
+    title: str = "Data Dashboard",
+    target_column: str = "",
+    theme: str = "dark",
+):
+    """Generate a self-contained interactive HTML dashboard from a CSV dataset."""
+    return await generate_dashboard(csv_data, title, target_column, theme)
 
+@mcp.tool()
+async def suggest_visualizations_tool(
+    csv_data: str,
+    target_column: str = "",
+    max_suggestions: int = 8,
+):
+    """Suggest the best chart types for your dataset based on column types."""
+    return await suggest_visualizations(csv_data, target_column, max_suggestions)
+
+@mcp.tool()
+async def generate_sql_tool(
+    csv_data: str,
+    question: str,
+    table_name: str = "dataset",
+    dialect: str = "standard",
+):
+    """Claude-powered natural language to SQL — describe what you want, get a query back."""
+    return await generate_sql(csv_data, question, table_name, dialect)
+    
 # =========================
 # RUN
 # =========================
