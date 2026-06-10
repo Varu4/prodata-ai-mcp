@@ -22,6 +22,7 @@ from sklearn.ensemble import IsolationForest
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 from scipy import stats
+import anthropic
 
 logger = logging.getLogger(__name__)
 
@@ -1146,3 +1147,509 @@ Keep it concise, clear, and focused on business value. No jargon."""
  
     except Exception as e:
         return {"success": False, "task": "explain_model", "error": str(e)}
+
+
+# ══════════════════════════════════════════════════════════════
+#  generate_dashboard
+# ══════════════════════════════════════════════════════════════
+async def generate_dashboard(
+    csv_data: str,
+    title: str = "Data Dashboard",
+    target_column: str = "",
+    theme: str = "dark",           # "dark" | "light"
+) -> dict:
+    """
+    Generate a self-contained interactive HTML dashboard from a CSV dataset.
+    Returns a complete HTML file with charts, KPI cards, and a data table.
+    No external dependencies — works offline. Just open in any browser.
+    """
+    try:
+        df = _parse_csv(csv_data)
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        cat_cols = df.select_dtypes(include="object").columns.tolist()
+ 
+        # Colors
+        if theme == "dark":
+            bg = "#070b14"
+            card_bg = "#0d1526"
+            text = "#e2e8f0"
+            muted = "#64748b"
+            border = "rgba(255,255,255,0.07)"
+            accent = "#00d4aa"
+        else:
+            bg = "#f8fafc"
+            card_bg = "#ffffff"
+            text = "#1e293b"
+            muted = "#64748b"
+            border = "rgba(0,0,0,0.08)"
+            accent = "#0ea5e9"
+ 
+        # KPI stats
+        kpis = []
+        for col in numeric_cols[:4]:
+            kpis.append({
+                "label": col,
+                "value": round(float(df[col].mean()), 2),
+                "sub": f"mean · {len(df[col].dropna())} values"
+            })
+ 
+        # Bar chart data (top categorical column value counts)
+        bar_data = {}
+        if cat_cols:
+            top_cat = cat_cols[0]
+            vc = df[top_cat].value_counts().head(8)
+            bar_data = {"labels": list(vc.index), "values": [int(v) for v in vc.values], "column": top_cat}
+ 
+        # Line chart data (first numeric col)
+        line_data = {}
+        if numeric_cols:
+            col = target_column if target_column in numeric_cols else numeric_cols[0]
+            sample = df[col].dropna().head(50).tolist()
+            line_data = {"values": [round(float(v), 2) for v in sample], "column": col}
+ 
+        # Scatter data (first 2 numeric cols)
+        scatter_data = {}
+        if len(numeric_cols) >= 2:
+            x_col, y_col = numeric_cols[0], numeric_cols[1]
+            sample_df = df[[x_col, y_col]].dropna().head(100)
+            scatter_data = {
+                "x": [round(float(v), 2) for v in sample_df[x_col]],
+                "y": [round(float(v), 2) for v in sample_df[y_col]],
+                "x_col": x_col,
+                "y_col": y_col,
+            }
+ 
+        # Data table (first 20 rows)
+        table_cols = df.columns[:8].tolist()
+        table_rows = df[table_cols].head(20).fillna("").values.tolist()
+ 
+        # Build HTML
+        kpi_html = ""
+        for kpi in kpis:
+            kpi_html += f"""
+            <div class="kpi-card">
+                <div class="kpi-label">{kpi['label']}</div>
+                <div class="kpi-value">{kpi['value']}</div>
+                <div class="kpi-sub">{kpi['sub']}</div>
+            </div>"""
+ 
+        table_headers = "".join([f"<th>{c}</th>" for c in table_cols])
+        table_rows_html = ""
+        for row in table_rows:
+            table_rows_html += "<tr>" + "".join([f"<td>{v}</td>" for v in row]) + "</tr>"
+ 
+        html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title}</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{ background:{bg}; color:{text}; font-family:'Segoe UI',sans-serif; padding:24px; }}
+h1 {{ font-size:1.6rem; font-weight:700; margin-bottom:6px; color:{text}; }}
+.subtitle {{ color:{muted}; font-size:0.85rem; margin-bottom:24px; }}
+.kpi-row {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px; margin-bottom:24px; }}
+.kpi-card {{ background:{card_bg}; border:1px solid {border}; border-radius:12px; padding:18px; position:relative; overflow:hidden; }}
+.kpi-card::before {{ content:''; position:absolute; top:0; left:0; right:0; height:2px; background:{accent}; opacity:0.7; }}
+.kpi-label {{ font-size:0.7rem; color:{muted}; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:6px; }}
+.kpi-value {{ font-size:1.8rem; font-weight:700; color:{accent}; font-family:'Courier New',monospace; }}
+.kpi-sub {{ font-size:0.72rem; color:{muted}; margin-top:4px; }}
+.charts-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:24px; }}
+.chart-card {{ background:{card_bg}; border:1px solid {border}; border-radius:12px; padding:18px; }}
+.chart-title {{ font-size:0.82rem; font-weight:600; color:{muted}; margin-bottom:14px; text-transform:uppercase; letter-spacing:0.06em; }}
+.chart-wrap {{ position:relative; height:220px; }}
+.table-card {{ background:{card_bg}; border:1px solid {border}; border-radius:12px; padding:18px; overflow-x:auto; }}
+table {{ width:100%; border-collapse:collapse; font-size:0.82rem; }}
+th {{ color:{muted}; font-weight:600; padding:8px 12px; text-align:left; border-bottom:1px solid {border}; text-transform:uppercase; font-size:0.7rem; letter-spacing:0.06em; }}
+td {{ padding:8px 12px; border-bottom:1px solid {border}; color:{text}; }}
+tr:last-child td {{ border-bottom:none; }}
+tr:hover td {{ background:rgba(255,255,255,0.02); }}
+.footer {{ margin-top:20px; text-align:center; font-size:0.75rem; color:{muted}; }}
+.footer span {{ color:{accent}; }}
+@media(max-width:768px) {{ .charts-grid {{ grid-template-columns:1fr; }} }}
+</style>
+</head>
+<body>
+<h1>📊 {title}</h1>
+<div class="subtitle">{len(df):,} rows · {len(df.columns)} columns · Generated by ProData AI</div>
+ 
+<div class="kpi-row">{kpi_html}</div>
+ 
+<div class="charts-grid">
+  <div class="chart-card">
+    <div class="chart-title">📈 {line_data.get('column','Trend')} — Trend</div>
+    <div class="chart-wrap"><canvas id="lineChart"></canvas></div>
+  </div>
+  <div class="chart-card">
+    <div class="chart-title">📊 {bar_data.get('column','Distribution')} — Distribution</div>
+    <div class="chart-wrap"><canvas id="barChart"></canvas></div>
+  </div>
+  <div class="chart-card">
+    <div class="chart-title">🔵 {scatter_data.get('x_col','')} vs {scatter_data.get('y_col','')} — Scatter</div>
+    <div class="chart-wrap"><canvas id="scatterChart"></canvas></div>
+  </div>
+  <div class="chart-card">
+    <div class="chart-title">🍩 {cat_cols[0] if cat_cols else 'Categories'} — Share</div>
+    <div class="chart-wrap"><canvas id="doughnutChart"></canvas></div>
+  </div>
+</div>
+ 
+<div class="table-card">
+  <div class="chart-title">🗂 Data Preview — First 20 rows</div>
+  <table>
+    <thead><tr>{table_headers}</tr></thead>
+    <tbody>{table_rows_html}</tbody>
+  </table>
+</div>
+ 
+<div class="footer">Generated by <span>ProData AI</span> · MCP Server · prodata-ai.mcpize.run</div>
+ 
+<script>
+const ACCENT = '{accent}';
+const COLORS = ['#00d4aa','#6366f1','#f59e0b','#ec4899','#3b82f6','#10b981','#8b5cf6','#f97316'];
+const gridColor = 'rgba(255,255,255,0.05)';
+const tickColor = '{muted}';
+ 
+Chart.defaults.color = tickColor;
+Chart.defaults.borderColor = gridColor;
+ 
+// Line chart
+new Chart(document.getElementById('lineChart'), {{
+  type: 'line',
+  data: {{
+    labels: {json.dumps(list(range(len(line_data.get('values', [])))))},
+    datasets: [{{ label: '{line_data.get("column","")}', data: {json.dumps(line_data.get('values', []))},
+      borderColor: ACCENT, backgroundColor: 'rgba(0,212,170,0.08)',
+      borderWidth: 2, pointRadius: 0, fill: true, tension: 0.4 }}]
+  }},
+  options: {{ responsive:true, maintainAspectRatio:false,
+    plugins: {{ legend: {{ display:false }} }},
+    scales: {{ x: {{ display:false }}, y: {{ grid: {{ color: gridColor }} }} }}
+  }}
+}});
+ 
+// Bar chart
+new Chart(document.getElementById('barChart'), {{
+  type: 'bar',
+  data: {{
+    labels: {json.dumps(bar_data.get('labels', []))},
+    datasets: [{{ label: '{bar_data.get("column","")}', data: {json.dumps(bar_data.get('values', []))},
+      backgroundColor: COLORS, borderRadius: 4 }}]
+  }},
+  options: {{ responsive:true, maintainAspectRatio:false,
+    plugins: {{ legend: {{ display:false }} }},
+    scales: {{ y: {{ grid: {{ color: gridColor }} }}, x: {{ grid: {{ display:false }} }} }}
+  }}
+}});
+ 
+// Scatter chart
+new Chart(document.getElementById('scatterChart'), {{
+  type: 'scatter',
+  data: {{
+    datasets: [{{ label: 'Data points',
+      data: {json.dumps([{"x": x, "y": y} for x, y in zip(scatter_data.get('x',[]), scatter_data.get('y',[]))])},
+      backgroundColor: 'rgba(0,212,170,0.5)', pointRadius: 4 }}]
+  }},
+  options: {{ responsive:true, maintainAspectRatio:false,
+    plugins: {{ legend: {{ display:false }} }},
+    scales: {{ x: {{ grid: {{ color: gridColor }} }}, y: {{ grid: {{ color: gridColor }} }} }}
+  }}
+}});
+ 
+// Doughnut chart
+new Chart(document.getElementById('doughnutChart'), {{
+  type: 'doughnut',
+  data: {{
+    labels: {json.dumps(bar_data.get('labels', []))},
+    datasets: [{{ data: {json.dumps(bar_data.get('values', []))},
+      backgroundColor: COLORS, borderWidth: 0 }}]
+  }},
+  options: {{ responsive:true, maintainAspectRatio:false,
+    plugins: {{ legend: {{ position:'right', labels: {{ font: {{ size:11 }}, padding:12 }} }} }}
+  }}
+}});
+</script>
+</body>
+</html>"""
+ 
+        return {
+            "success": True,
+            "task": "generate_dashboard",
+            "title": title,
+            "theme": theme,
+            "rows": len(df),
+            "columns": len(df.columns),
+            "kpis_shown": len(kpis),
+            "charts": ["line", "bar", "scatter", "doughnut"],
+            "html": html,
+            "usage": "Save the 'html' field content as a .html file and open in any browser.",
+        }
+ 
+    except Exception as e:
+        return {"success": False, "task": "generate_dashboard", "error": str(e)}
+ 
+ 
+# ══════════════════════════════════════════════════════════════
+#  suggest_visualizations
+# ══════════════════════════════════════════════════════════════
+async def suggest_visualizations(
+    csv_data: str,
+    target_column: str = "",
+    max_suggestions: int = 8,
+) -> dict:
+    """
+    Analyze column types and automatically suggest the best chart types for your data.
+    Returns ranked visualization suggestions with column recommendations and rationale.
+    Saves hours of chart selection — just pick the one that fits your story.
+    """
+    try:
+        df = _parse_csv(csv_data)
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        cat_cols = df.select_dtypes(include="object").columns.tolist()
+        date_cols = []
+ 
+        # Detect date columns
+        for col in cat_cols:
+            try:
+                pd.to_datetime(df[col].dropna().head(10))
+                date_cols.append(col)
+            except Exception:
+                pass
+        non_date_cats = [c for c in cat_cols if c not in date_cols]
+ 
+        suggestions = []
+ 
+        # 1. Time series line chart
+        if date_cols and numeric_cols:
+            for date_col in date_cols[:2]:
+                for num_col in numeric_cols[:2]:
+                    suggestions.append({
+                        "rank": 1,
+                        "chart_type": "Line Chart",
+                        "x_column": date_col,
+                        "y_column": num_col,
+                        "rationale": f"'{date_col}' is a date column — line chart shows trend over time for '{num_col}'.",
+                        "use_case": "Trend analysis, time series visualization",
+                        "priority": "high",
+                    })
+ 
+        # 2. Bar chart for categorical
+        if non_date_cats and numeric_cols:
+            for cat_col in non_date_cats[:2]:
+                n_unique = df[cat_col].nunique()
+                if n_unique <= 20:
+                    suggestions.append({
+                        "rank": 2,
+                        "chart_type": "Bar Chart",
+                        "x_column": cat_col,
+                        "y_column": numeric_cols[0],
+                        "rationale": f"'{cat_col}' has {n_unique} categories — bar chart compares '{numeric_cols[0]}' across groups.",
+                        "use_case": "Category comparison, ranking",
+                        "priority": "high",
+                    })
+ 
+        # 3. Scatter plot for correlations
+        if len(numeric_cols) >= 2:
+            suggestions.append({
+                "rank": 3,
+                "chart_type": "Scatter Plot",
+                "x_column": numeric_cols[0],
+                "y_column": numeric_cols[1] if len(numeric_cols) > 1 else numeric_cols[0],
+                "rationale": f"Both columns are numeric — scatter reveals correlation between '{numeric_cols[0]}' and '{numeric_cols[1]}'.",
+                "use_case": "Correlation analysis, outlier detection",
+                "priority": "high",
+            })
+ 
+        # 4. Histogram for distribution
+        for col in numeric_cols[:3]:
+            suggestions.append({
+                "rank": 4,
+                "chart_type": "Histogram",
+                "x_column": col,
+                "y_column": "frequency",
+                "rationale": f"'{col}' is numeric — histogram shows its distribution and skewness.",
+                "use_case": "Distribution analysis, outlier spotting",
+                "priority": "medium",
+            })
+ 
+        # 5. Pie/Doughnut for proportions
+        if non_date_cats:
+            for cat_col in non_date_cats[:2]:
+                n_unique = df[cat_col].nunique()
+                if 2 <= n_unique <= 8:
+                    suggestions.append({
+                        "rank": 5,
+                        "chart_type": "Doughnut Chart",
+                        "x_column": cat_col,
+                        "y_column": "count",
+                        "rationale": f"'{cat_col}' has {n_unique} categories — doughnut shows proportional share.",
+                        "use_case": "Part-to-whole relationships, market share",
+                        "priority": "medium",
+                    })
+ 
+        # 6. Heatmap for correlations
+        if len(numeric_cols) >= 3:
+            suggestions.append({
+                "rank": 6,
+                "chart_type": "Correlation Heatmap",
+                "x_column": "all numeric columns",
+                "y_column": "all numeric columns",
+                "rationale": f"Dataset has {len(numeric_cols)} numeric columns — heatmap reveals all pairwise correlations at once.",
+                "use_case": "Feature selection, multicollinearity detection",
+                "priority": "medium",
+            })
+ 
+        # 7. Box plot for outliers
+        if numeric_cols and non_date_cats:
+            suggestions.append({
+                "rank": 7,
+                "chart_type": "Box Plot",
+                "x_column": non_date_cats[0],
+                "y_column": numeric_cols[0],
+                "rationale": f"Shows distribution spread and outliers of '{numeric_cols[0]}' per '{non_date_cats[0]}' group.",
+                "use_case": "Outlier detection, group distribution comparison",
+                "priority": "medium",
+            })
+ 
+        # 8. Target-specific suggestions
+        if target_column and target_column in numeric_cols:
+            for col in numeric_cols[:3]:
+                if col != target_column:
+                    suggestions.append({
+                        "rank": 8,
+                        "chart_type": "Scatter Plot",
+                        "x_column": col,
+                        "y_column": target_column,
+                        "rationale": f"Shows relationship between '{col}' and your target '{target_column}'. Useful for feature analysis.",
+                        "use_case": "Feature vs target relationship, regression visualization",
+                        "priority": "high",
+                    })
+ 
+        # Deduplicate and limit
+        seen = set()
+        unique_suggestions = []
+        for s in suggestions:
+            key = f"{s['chart_type']}_{s['x_column']}_{s['y_column']}"
+            if key not in seen:
+                seen.add(key)
+                unique_suggestions.append(s)
+ 
+        final = unique_suggestions[:max_suggestions]
+ 
+        return {
+            "success": True,
+            "task": "suggest_visualizations",
+            "total_suggestions": len(final),
+            "dataset_profile": {
+                "numeric_columns": numeric_cols,
+                "categorical_columns": non_date_cats,
+                "date_columns": date_cols,
+                "rows": len(df),
+            },
+            "suggestions": final,
+            "top_pick": final[0] if final else None,
+            "tip": "Start with 'high' priority suggestions — they're chosen based on your actual column types.",
+        }
+ 
+    except Exception as e:
+        return {"success": False, "task": "suggest_visualizations", "error": str(e)}
+ 
+ 
+# ══════════════════════════════════════════════════════════════
+#  generate_sql
+# ══════════════════════════════════════════════════════════════
+async def generate_sql(
+    csv_data: str,
+    question: str,
+    table_name: str = "dataset",
+    dialect: str = "standard",    # "standard" | "mysql" | "postgresql" | "sqlite" | "bigquery"
+) -> dict:
+    """
+    Claude-powered natural language to SQL converter.
+    Describe what you want in plain English — get a ready-to-run SQL query back.
+    Understands your actual column names and data types from the CSV.
+    """
+    try:
+        df = _parse_csv(csv_data)
+ 
+        # Build schema context
+        schema_lines = []
+        for col in df.columns:
+            dtype = str(df[col].dtype)
+            sample_vals = df[col].dropna().head(3).tolist()
+            sql_type = (
+                "INTEGER" if "int" in dtype else
+                "FLOAT" if "float" in dtype else
+                "DATE" if "datetime" in dtype else
+                "VARCHAR(255)"
+            )
+            schema_lines.append(f"  {col} {sql_type}  -- e.g. {sample_vals}")
+ 
+        schema = f"CREATE TABLE {table_name} (\n" + ",\n".join(schema_lines) + "\n);"
+ 
+        # Sample data
+        sample_rows = df.head(3).to_string(index=False)
+ 
+        # Dialect notes
+        dialect_notes = {
+            "mysql": "Use MySQL syntax. Use LIMIT for row limiting.",
+            "postgresql": "Use PostgreSQL syntax. Use LIMIT for row limiting.",
+            "sqlite": "Use SQLite syntax. Avoid advanced window functions.",
+            "bigquery": "Use BigQuery Standard SQL syntax. Use LIMIT for row limiting.",
+            "standard": "Use standard ANSI SQL syntax.",
+        }
+        dialect_hint = dialect_notes.get(dialect, dialect_notes["standard"])
+ 
+        prompt = f"""You are an expert SQL analyst. Generate a SQL query to answer this question.
+ 
+Table schema:
+{schema}
+ 
+Sample data (first 3 rows):
+{sample_rows}
+ 
+Question: {question}
+ 
+Dialect: {dialect_hint}
+ 
+Rules:
+1. Use ONLY the column names that exist in the schema above — exact spelling, case-sensitive
+2. Return ONLY the SQL query — no explanation, no markdown, no backticks
+3. Make the query correct, efficient, and ready to run
+4. If aggregating, always include a GROUP BY
+5. If the question is ambiguous, choose the most useful interpretation
+ 
+SQL query:"""
+ 
+        client = anthropic.Anthropic()
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=500,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        sql_query = message.content[0].text.strip()
+ 
+        # Clean up any accidental markdown
+        if sql_query.startswith("```"):
+            sql_query = sql_query.split("```")[1]
+            if sql_query.startswith("sql"):
+                sql_query = sql_query[3:]
+        sql_query = sql_query.strip()
+ 
+        return {
+            "success": True,
+            "task": "generate_sql",
+            "question": question,
+            "table_name": table_name,
+            "dialect": dialect,
+            "sql_query": sql_query,
+            "schema_used": schema,
+            "columns_available": list(df.columns),
+            "powered_by": "Claude Sonnet",
+            "tip": f"Run this query against a table named '{table_name}' loaded from your CSV.",
+        }
+ 
+    except Exception as e:
+        return {"success": False, "task": "generate_sql", "error": str(e)}
