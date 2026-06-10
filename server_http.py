@@ -9,6 +9,9 @@ from mcp_tools import (
     clean_dataset,        
     detect_anomalies,      
     compare_datasets, 
+    cluster_data,
+    correlation_analysis,
+    explain_model,
 )
 
 # Create MCP server
@@ -147,6 +150,39 @@ async def compare_datasets_tool(
         csv_data_1, csv_data_2,
         label_1, label_2, match_column
     )
+
+@mcp.tool()
+async def cluster_data_tool(
+    csv_data: str,
+    n_clusters: int = 3,
+    columns: str = "",
+    method: str = "kmeans",
+    scale_features: bool = True,
+):
+    """Cluster/segment rows using K-Means. Returns cluster profiles and distinguishing features."""
+    return await cluster_data(csv_data, n_clusters, columns, method, scale_features)
+
+@mcp.tool()
+async def correlation_analysis_tool(
+    csv_data: str,
+    target_column: str = "",
+    method: str = "pearson",
+    top_n: int = 10,
+    threshold: float = 0.0,
+):
+    """Compute correlation matrix, top pairs, p-values, and multicollinearity warnings."""
+    return await correlation_analysis(csv_data, target_column, method, top_n, threshold)
+
+@mcp.tool()
+async def explain_model_tool(
+    csv_data: str,
+    target_column: str,
+    audience: str = "business",
+    include_recommendations: bool = True,
+):
+    """Claude-powered plain-English explanation of ML results with actionable recommendations."""
+    return await explain_model(csv_data, target_column, audience, include_recommendations)
+
 
 # =========================
 # RUN
