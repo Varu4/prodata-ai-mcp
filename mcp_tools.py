@@ -19,6 +19,9 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error, accuracy_score
 from prophet import Prophet
 from sklearn.ensemble import IsolationForest
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from scipy import stats
 
 logger = logging.getLogger(__name__)
 
@@ -834,3 +837,312 @@ async def compare_datasets(
  
     except Exception as e:
         return {"success": False, "task": "compare_datasets", "error": str(e)}
+
+# ══════════════════════════════════════════════════════════════
+#  cluster_data
+# ══════════════════════════════════════════════════════════════
+async def cluster_data(
+    csv_data: str,
+    n_clusters: int = 3,
+    columns: str = "",
+    method: str = "kmeans",
+    scale_features: bool = True,
+) -> dict:
+    """
+    Segment/cluster rows in a CSV dataset using K-Means.
+    Returns cluster labels, per-cluster stats, and top distinguishing features.
+    Great for customer segmentation, product grouping, and pattern discovery.
+    """
+    try:
+        df = _parse_csv(csv_data)
+ 
+        if columns.strip():
+            target_cols = [c.strip() for c in columns.split(",") if c.strip() in df.columns]
+        else:
+            target_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+ 
+        if not target_cols:
+            return {"success": False, "task": "cluster_data", "error": "No numeric columns found."}
+ 
+        if len(df) < n_clusters:
+            return {"success": False, "task": "cluster_data", "error": f"Need at least {n_clusters} rows."}
+ 
+        X = df[target_cols].fillna(df[target_cols].median())
+ 
+        if scale_features:
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X)
+        else:
+            X_scaled = X.values
+ 
+        n_clusters = min(n_clusters, len(df))
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        labels = kmeans.fit_predict(X_scaled)
+        df["__cluster__"] = labels
+ 
+        inertia = float(kmeans.inertia_)
+ 
+        cluster_profiles = {}
+        for cluster_id in range(n_clusters):
+            cluster_df = df[df["__cluster__"] == cluster_id]
+            size = len(cluster_df)
+            profile = {
+                "size": size,
+                "percent": round(size / len(df) * 100, 1),
+                "stats": {}
+            }
+            for col in target_cols:
+                profile["stats"][col] = {
+                    "mean": round(float(cluster_df[col].mean()), 4),
+                    "median": round(float(cluster_df[col].median()), 4),
+                    "std": round(float(cluster_df[col].std()), 4),
+                }
+            cluster_profiles[f"cluster_{cluster_id}"] = profile
+ 
+        cluster_means = pd.DataFrame({
+            f"cluster_{i}": df[df["__cluster__"] == i][target_cols].mean()
+            for i in range(n_clusters)
+        }).T
+        feature_variance = cluster_means.var().sort_values(ascending=False)
+        top_features = feature_variance.head(5).index.tolist()
+ 
+        output_df = df.copy()
+        output_df = output_df.rename(columns={"__cluster__": "cluster_label"})
+ 
+        return {
+            "success": True,
+            "task": "cluster_data",
+            "method": method,
+            "n_clusters": n_clusters,
+            "total_rows": len(df),
+            "columns_used": target_cols,
+            "inertia": round(inertia, 2),
+            "cluster_profiles": cluster_profiles,
+            "top_distinguishing_features": top_features,
+            "cluster_sizes": {
+                f"cluster_{i}": int((labels == i).sum())
+                for i in range(n_clusters)
+            },
+            "clustered_csv": output_df.to_csv(index=False),
+        }
+ 
+    except Exception as e:
+        return {"success": False, "task": "cluster_data", "error": str(e)}
+ 
+ 
+# ══════════════════════════════════════════════════════════════
+#  correlation_analysis
+# ══════════════════════════════════════════════════════════════
+async def correlation_analysis(
+    csv_data: str,
+    target_column: str = "",
+    method: str = "pearson",
+    top_n: int = 10,
+    threshold: float = 0.0,
+) -> dict:
+    """
+    Compute full correlation matrix and identify top correlated feature pairs.
+    If target_column is provided, ranks all features by correlation with it.
+    Supports Pearson, Spearman, and Kendall methods with p-value significance testing.
+    """
+    try:
+        df = _parse_csv(csv_data)
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+ 
+        if len(numeric_cols) < 2:
+            return {"success": False, "task": "correlation_analysis", "error": "Need at least 2 numeric columns."}
+ 
+        numeric_df = df[numeric_cols].fillna(df[numeric_cols].median())
+        corr_matrix = numeric_df.corr(method=method)
+ 
+        # All pairs
+        pairs = []
+        for i in range(len(corr_matrix.columns)):
+            for j in range(i + 1, len(corr_matrix.columns)):
+                col_a = corr_matrix.columns[i]
+                col_b = corr_matrix.columns[j]
+                corr_val = float(corr_matrix.iloc[i, j])
+                if abs(corr_val) >= threshold:
+                    pairs.append({
+                        "feature_a": col_a,
+                        "feature_b": col_b,
+                        "correlation": round(corr_val, 4),
+                        "abs_correlation": round(abs(corr_val), 4),
+                        "strength": (
+                            "very strong" if abs(corr_val) >= 0.8 else
+                            "strong" if abs(corr_val) >= 0.6 else
+                            "moderate" if abs(corr_val) >= 0.4 else
+                            "weak"
+                        ),
+                        "direction": "positive" if corr_val > 0 else "negative",
+                    })
+ 
+        pairs_sorted = sorted(pairs, key=lambda x: x["abs_correlation"], reverse=True)
+ 
+        # Target correlations
+        target_correlations = {}
+        if target_column and target_column in numeric_cols:
+            target_corr = corr_matrix[target_column].drop(target_column).sort_values(
+                key=abs, ascending=False
+            )
+            target_correlations = {
+                col: {
+                    "correlation": round(float(val), 4),
+                    "strength": (
+                        "very strong" if abs(val) >= 0.8 else
+                        "strong" if abs(val) >= 0.6 else
+                        "moderate" if abs(val) >= 0.4 else
+                        "weak"
+                    ),
+                    "direction": "positive" if val > 0 else "negative",
+                }
+                for col, val in target_corr.items()
+            }
+ 
+        multicollinear_pairs = [
+            p for p in pairs_sorted
+            if p["abs_correlation"] >= 0.85
+            and p["feature_a"] != target_column
+            and p["feature_b"] != target_column
+        ]
+ 
+        # p-values for top pairs
+        sig_results = []
+        for pair in pairs_sorted[:top_n]:
+            try:
+                if method == "pearson":
+                    _, pval = stats.pearsonr(numeric_df[pair["feature_a"]], numeric_df[pair["feature_b"]])
+                elif method == "spearman":
+                    _, pval = stats.spearmanr(numeric_df[pair["feature_a"]], numeric_df[pair["feature_b"]])
+                else:
+                    pval = None
+                sig_results.append({
+                    **pair,
+                    "p_value": round(float(pval), 6) if pval is not None else None,
+                    "significant": bool(pval < 0.05) if pval is not None else None,
+                })
+            except Exception:
+                sig_results.append(pair)
+ 
+        return {
+            "success": True,
+            "task": "correlation_analysis",
+            "method": method,
+            "columns_analyzed": numeric_cols,
+            "total_pairs": len(pairs),
+            "top_correlated_pairs": sig_results,
+            "target_correlations": target_correlations,
+            "multicollinearity_warnings": multicollinear_pairs[:10],
+            "correlation_matrix": corr_matrix.round(4).to_dict(),
+            "summary": {
+                "strongest_pair": pairs_sorted[0] if pairs_sorted else None,
+                "avg_abs_correlation": round(float(np.mean([p["abs_correlation"] for p in pairs])), 4) if pairs else 0,
+                "highly_correlated_count": len([p for p in pairs if p["abs_correlation"] >= 0.7]),
+            }
+        }
+ 
+    except Exception as e:
+        return {"success": False, "task": "correlation_analysis", "error": str(e)}
+ 
+ 
+# ══════════════════════════════════════════════════════════════
+#  explain_model
+# ══════════════════════════════════════════════════════════════
+async def explain_model(
+    csv_data: str,
+    target_column: str,
+    audience: str = "business",
+    include_recommendations: bool = True,
+) -> dict:
+    """
+    Claude-powered plain-English explanation of your ML results.
+    Trains a Gradient Boosting model, then uses Claude AI to explain
+    the results, feature drivers, and actionable recommendations.
+    Unique: combines AutoML + AI explanation in one tool.
+    """
+    try:
+        df = _parse_csv(csv_data)
+ 
+        if target_column not in df.columns:
+            return {"success": False, "task": "explain_model", "error": f"Target column '{target_column}' not found."}
+ 
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        feature_cols = [c for c in numeric_cols if c != target_column]
+ 
+        if not feature_cols:
+            return {"success": False, "task": "explain_model", "error": "No numeric feature columns found."}
+ 
+        X = df[feature_cols].fillna(0)
+        y = df[target_column].fillna(df[target_column].median())
+ 
+        is_classification = (y.nunique() < 15) and (y.nunique() > 1)
+ 
+        from sklearn.ensemble import GradientBoostingRegressor, GradientBoostingClassifier
+        from sklearn.model_selection import train_test_split
+        from sklearn.metrics import r2_score, accuracy_score
+ 
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+ 
+        if is_classification:
+            model = GradientBoostingClassifier(random_state=42)
+            model.fit(X_train, y_train)
+            score = float(accuracy_score(y_test, model.predict(X_test)))
+            metric_name = "accuracy"
+        else:
+            model = GradientBoostingRegressor(random_state=42)
+            model.fit(X_train, y_train)
+            score = float(r2_score(y_test, model.predict(X_test)))
+            metric_name = "R²"
+ 
+        importance = pd.Series(model.feature_importances_, index=feature_cols)
+        top_features = importance.sort_values(ascending=False).head(5)
+ 
+        tone = "non-technical business executive" if audience == "business" else "senior data scientist"
+ 
+        prompt = f"""You are explaining machine learning results to a {tone}.
+ 
+Dataset: {len(df)} rows, target variable: '{target_column}'
+Task type: {'Classification' if is_classification else 'Regression'}
+Best model: Gradient Boosting
+{metric_name} score: {round(score, 4)} ({'excellent' if score > 0.9 else 'good' if score > 0.7 else 'fair'})
+ 
+Top feature importances driving '{target_column}':
+{chr(10).join([f"- {feat}: {round(imp*100, 1)}% importance" for feat, imp in top_features.items()])}
+ 
+Please provide:
+1. A 2-3 sentence plain English explanation of what the model learned
+2. What the {metric_name} score of {round(score, 4)} means in practical terms
+3. The top 3 business insights from the feature importances
+{"4. 3 specific actionable recommendations based on these results" if include_recommendations else ""}
+ 
+Keep it concise, clear, and focused on business value. No jargon."""
+ 
+        client = anthropic.Anthropic()
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=800,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        explanation = message.content[0].text
+ 
+        return {
+            "success": True,
+            "task": "explain_model",
+            "target_column": target_column,
+            "audience": audience,
+            "model_results": {
+                "model": "Gradient Boosting",
+                "task_type": "classification" if is_classification else "regression",
+                "metric": metric_name,
+                "score": round(score, 4),
+                "training_rows": len(X_train),
+                "test_rows": len(X_test),
+            },
+            "feature_importance": top_features.round(4).to_dict(),
+            "top_driver": top_features.index[0],
+            "ai_explanation": explanation,
+            "powered_by": "Claude Sonnet + Gradient Boosting",
+        }
+ 
+    except Exception as e:
+        return {"success": False, "task": "explain_model", "error": str(e)}
