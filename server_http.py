@@ -14,7 +14,7 @@ from mcp_tools import (
     explain_model,
     generate_dashboard,
     suggest_visualizations,
-    generate_sql,
+    generate_sql,  
 )
 
 # Create MCP server
