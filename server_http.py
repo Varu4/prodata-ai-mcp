@@ -1,5 +1,5 @@
 import os
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP 
 from mcp_tools import (
     train_automl_models,
     forecast_timeseries,
